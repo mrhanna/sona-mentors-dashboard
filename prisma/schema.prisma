@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Mentor {
+  id         String   @id @default(cuid())
+  name       String
+  instrument String?
+  visits     Visit[]
+  createdAt  DateTime @default(now())
+}
+
+model School {
+  id        String   @id @default(cuid())
+  name      String
+  director  String?
+  visits    Visit[]
+  createdAt DateTime @default(now())
+}
+
+model Visit {
+  id        String   @id @default(cuid())
+  mentor    Mentor   @relation(fields: [mentorId], references: [id])
+  mentorId  String
+  school    School   @relation(fields: [schoolId], references: [id])
+  schoolId  String
+  date      DateTime
+  status    VisitStatus @default(PENDING)
+  createdAt DateTime @default(now())
+}
+
+enum VisitStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+}
