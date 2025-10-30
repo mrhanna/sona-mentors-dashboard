@@ -8,34 +8,228 @@ datasource db {
 }
 
 model Mentor {
-  id         String   @id @default(cuid())
-  name       String
-  instrument String?
-  visits     Visit[]
-  createdAt  DateTime @default(now())
+  id            String         @id @default(cuid())
+  name          String
+  instrument    String?
+  // Auth user account for this mentor (optional).
+  // When present, the mentor uses the shared `User` auth system.
+  user          User?          @relation("UserMentor", fields: [userId], references: [id])
+  userId        String?        @unique
+
+  // Visits for this mentor.
+  visits        Visit[]
+
+  // Per-school assignment records (includes allotments).
+  mentorSchools MentorSchool[]
+
+  // Record creation timestamp.
+  createdAt     DateTime       @default(now())
 }
 
 model School {
-  id        String   @id @default(cuid())
-  name      String
-  director  String?
-  visits    Visit[]
-  createdAt DateTime @default(now())
+  id                String         @id @default(cuid())
+  name              String
+  // Optional free-text director contact for this school.
+  director          String?
+
+  // IANA timezone used to interpret local times for this school (e.g.
+  // "America/Los_Angeles"). Datetimes are stored in UTC; use this
+  // timezone when converting to local display times.
+  timezone          String         @default("UTC")
+
+  // Program directors (Director records) who can manage this school.
+  directors         Director[]
+
+  // Per-mentor assignment records for this school (includes allotments).
+  mentorAssignments MentorSchool[]
+
+  // Number of services allocated to this school for the current period
+  // (semester/grant cycle). Directors distribute these to mentors via
+  // `MentorSchool.allotments`.
+  servicesAllocated Int            @default(0)
+
+  // Visits scheduled at this school.
+  visits            Visit[]
+
+  // Record creation timestamp.
+  createdAt         DateTime       @default(now())
+
+  // Recurring class-time templates defined for this school.
+  classTimes        ClassTime[]
+}
+
+/// Join model between Mentor and School. Stores how many services have been
+/// allotted to a given Mentor for a given School. Use this to enforce and
+/// display per-mentor allotments when scheduling visits.
+model MentorSchool {
+  id         String   @id @default(cuid())
+  mentor     Mentor   @relation(fields: [mentorId], references: [id])
+  mentorId   String
+  school     School   @relation(fields: [schoolId], references: [id])
+  schoolId   String
+  // Number of services allotted to this mentor at this school for the
+  // current period. Directors set this when distributing services.
+  allotments Int      @default(0)
+
+  // Record creation timestamp.
+  createdAt  DateTime @default(now())
+
+  @@unique([mentorId, schoolId])
 }
 
 model Visit {
-  id        String   @id @default(cuid())
-  mentor    Mentor   @relation(fields: [mentorId], references: [id])
-  mentorId  String
-  school    School   @relation(fields: [schoolId], references: [id])
-  schoolId  String
-  date      DateTime
-  status    VisitStatus @default(PENDING)
-  createdAt DateTime @default(now())
+  id              String      @id @default(cuid())
+  mentor          Mentor      @relation(fields: [mentorId], references: [id])
+  mentorId        String
+  school          School      @relation(fields: [schoolId], references: [id])
+  schoolId        String
+  date            DateTime
+  // A visit can correspond to multiple ClassTime occurrences (e.g. one
+  // visit covering multiple classes on the same day). Many-to-many relation
+  // between Visit and ClassTime.
+  classTimes      ClassTime[]
+  status          VisitStatus @default(PENDING)
+  // number of services this visit should count toward the school's allocation.
+  // Most visits default to 1. Business logic can set this to a larger value
+  // when the visit spans multiple hours according to symphony rules.
+  servicesCounted Int         @default(1)
+  // which user created/requested the visit (could be a director)
+  createdBy       User?       @relation("createdBy", fields: [createdById], references: [id])
+  createdById     String?
+  // who confirmed/rejected the visit
+  confirmedBy     User?       @relation("confirmedBy", fields: [confirmedById], references: [id])
+  confirmedById   String?
+  confirmedAt     DateTime?
+  createdAt       DateTime    @default(now())
 }
 
 enum VisitStatus {
   PENDING
   CONFIRMED
   COMPLETED
+}
+
+/// Application users (mentors are separate). School program directors will be Users.
+model User {
+  id                         String               @id @default(cuid())
+  email                      String               @unique
+  name                       String?
+  // Role used to determine high-level permissions (ADMIN, DIRECTOR, MENTOR).
+  role                       UserRole             @default(DIRECTOR)
+
+  // Hashed password for local auth; may be null when using external SSO.
+  passwordHash               String?
+
+  // Relations
+  // Director record for this user (if they act as a Director).
+  schoolDirector             Director?            @relation("UserToDirector")
+
+  // Mentor record for this user (if they act as a Mentor).
+  mentor                     Mentor?              @relation("UserMentor")
+
+  // Account creation timestamp.
+  createdAt                  DateTime             @default(now())
+
+  // Visits created by this user (metadata).
+  visitsCreated              Visit[]              @relation("createdBy")
+
+  // Visits this user confirmed or rejected (metadata).
+  visitsConfirmed            Visit[]              @relation("confirmedBy")
+
+  // ClassTime templates created by this user (metadata only).
+  createdClassTimes          ClassTime[]          @relation("ClassTimeCreatedBy")
+
+  // ClassTimeException records created by this user (metadata only).
+  createdClassTimeExceptions ClassTimeException[] @relation("ClassTimeExceptionCreatedBy")
+}
+
+/// Director record linking a `User` to a `School` with scoped permissions.
+model Director {
+  id          String   @id @default(cuid())
+  // Auth user account for this director (one-to-one mapping).
+  user        User     @relation("UserToDirector", fields: [userId], references: [id])
+  userId      String   @unique
+
+  // Schools this director is responsible for. Directors may be assigned to
+  // multiple school records (e.g., separate band/orchestra entries).
+  schools     School[]
+
+  // Optional per-director permissions payload for fine-grained control.
+  permissions Json?
+
+  // Whether this director account is active.
+  isActive    Boolean  @default(true)
+
+  // Record creation timestamp.
+  createdAt   DateTime @default(now())
+}
+
+/// Recurring class time template for a school. We store an RFC5545 RRULE string
+/// and a DTSTART to support complex recurrences. The business logic should
+/// expand rules into occurrences and support splitting recurring rules when
+/// exceptions are created (similar to how calendar systems manage recurrences).
+model ClassTime {
+  id                   String               @id @default(cuid())
+  school               School               @relation(fields: [schoolId], references: [id])
+  schoolId             String
+  name                 String?
+  // Anchor start datetime for the recurrence (includes date + time).
+  dtstart              DateTime
+
+  // Duration of the class/slot in minutes.
+  durationMinutes      Int
+
+  // RFC5545 RRULE string describing the recurrence (e.g. "FREQ=WEEKLY;BYDAY=MO,WE,FR").
+  rrule                String
+  // timezone for interpreting dtstart and recurrence rules (IANA tz name)
+  timezone             String               @default("UTC")
+  // maximum number of mentors that may attend this class concurrently
+  maxConcurrentMentors Int                  @default(1)
+  // active/inactive flag so directors can disable templates without deleting
+  isActive             Boolean              @default(true)
+  // which user created this class time
+  createdBy            User?                @relation("ClassTimeCreatedBy", fields: [createdById], references: [id])
+  createdById          String?
+  createdAt            DateTime             @default(now())
+  // exceptions/overrides for particular occurrences
+  exceptions           ClassTimeException[]
+  // visits that were scheduled from this class time
+  visits               Visit[]
+}
+
+enum ExceptionType {
+  CANCELLED
+  MODIFIED
+}
+
+/// Exceptions to a recurring ClassTime: cancellations or modifications for
+/// a particular occurrence. The BL should apply these when expanding occurrences.
+model ClassTimeException {
+  id                 String        @id @default(cuid())
+  classTime          ClassTime     @relation(fields: [classTimeId], references: [id])
+  classTimeId        String
+  // the original occurrence datetime (in the classTime.timezone)
+  occurrence         DateTime
+  // Type of exception (CANCELLED or MODIFIED).
+  type               ExceptionType
+
+  // For MODIFIED exceptions: replacement start datetime and/or duration
+  // (duration in minutes). These are interpreted in the classTime timezone.
+  newDtstart         DateTime?
+  newDurationMinutes Int?
+
+  // Optional human-readable note about the exception.
+  note               String?
+  createdBy          User?         @relation("ClassTimeExceptionCreatedBy", fields: [createdById], references: [id])
+  createdById        String?
+  createdAt          DateTime      @default(now())
+
+  // relation to the user who created this exception
+  @@index([classTimeId, occurrence])
+}
+
+enum UserRole {
+  DIRECTOR
+  ADMIN
+  MENTOR
 }
