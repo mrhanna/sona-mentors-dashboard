@@ -9,7 +9,8 @@
       "extensions": [
         "esbenp.prettier-vscode",
         "dbaeumer.vscode-eslint",
-        "ms-vscode.vscode-typescript-next"
+        "ms-vscode.vscode-typescript-next",
+        "prisma.prisma"
       ],
       "settings": {
         "terminal.integrated.shell.linux": "/bin/bash",

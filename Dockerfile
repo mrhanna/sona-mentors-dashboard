@@ -14,8 +14,9 @@ FROM node:lts-bullseye-slim AS dev
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY --chown=node:node . .
+COPY --from=deps /app/node_modules ./node_modules
+RUN chown node:node /app/node_modules
 
 USER node
 CMD ["npm", "run", "dev"]
