@@ -1,27 +1,21 @@
-# Multi-stage build for Next.js
-FROM node:20-alpine AS builder
-WORKDIR /app
+# Stage 1: Dependencies
+FROM node:lts-bullseye-slim AS deps
 
+WORKDIR /app
 COPY package*.json ./
+RUN chown -R node:node /app
+
+USER node
 RUN npm ci --silent
 
-COPY . .
+# Stage 2: Development
+FROM node:lts-bullseye-slim AS dev
 
-# Generate Prisma client if present
-RUN npx prisma generate || true
-RUN npm run build
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-FROM node:20-alpine AS runner
 WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --chown=node:node . .
 
-ENV NODE_ENV=production
-
-# Copy runtime files
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
-
-EXPOSE 3000
-CMD ["npm", "start"]
+USER node
+CMD ["npm", "run", "dev"]
